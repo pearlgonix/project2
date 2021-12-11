@@ -46,7 +46,7 @@ class_diag <- function(score, truth, positive, cutoff=.5){
 
 # Mining, Classification, Prediction
 
-## Name and EID here
+## Tran Nguyen, tnn649
 
 ### Introduction 
 
@@ -54,84 +54,217 @@ Paragraph or two introducing your datasets and variables, why they are interesti
 
 ```{R}
 library(tidyverse)
-# read your datasets in here, e.g., with read_csv()
+Fatalities <- read_csv('Fatalities.csv')
 
-# if your dataset needs tidying, do so here
+#Pulling the columns I want since there are a lot of variables
+Fatalities1987 <- Fatalities %>% filter(year=="1987") %>% select(2,6, 8:9, 16, 21, 27) %>% group_by(state)
 
-# any other code here
 ```
+*My dataset is called "Fatalities1987" and it is a subset of a larger set called "Fatalities". This dataset is from https://vincentarelbundock.github.io/ and is US traffic fatalities panel data for US states excluding Alaska and Hawaii which was collected anually 1982-1988.*
+
+*In my subset, I am looking at 6 variables: The 'state' variable which identifies each state per row and the 'income' column is income in USD per capita. 'beertax' which is a numerical variable which indicates the tax on a case of beer. 'baptist' is a numeric variable which gives the percent of respondents that identify as Southern Baptist. 'jail' is a binary character variable that indicates if the state carries a mandatory jail sentence for DWIs. 'fatal1517' is a numeric variable that counts the number of vehicle fatalities in the 15-17 age group and 'afatal' counts the number of vehicle fatalities were alcohol-related.*
+
+*Each variable has 48 observations and my categorical/binary variable has 34 'no' responses and 14 'yes' responses.*
 
 ### Cluster Analysis
 
 ```{R}
-library(cluster)
-# clustering code here
-```
+library(cluster) 
 
-Discussion of clustering here
+#only likes numerics so I've altered my frame to appease it
+temp <- Fatalities1987 %>% select(2:4,6:7)
+Fatalities1987 <- Fatalities1987 %>% na.omit()
+temp <- temp %>% remove_rownames %>% column_to_rownames(var="state")
+
+sil_width <- vector()  #empty vector to hold mean sil width
+for (i in 2:10) {
+    kms <- kmeans(temp, centers = i)  #compute k-means solution for each k
+    sil <- silhouette(kms$cluster, dist(temp))  #get sil widths
+    sil_width[i] <- mean(sil[, 3])  #take averages (higher is better)
+}
+
+#The highest sil width found at k=3
+ggplot() + geom_line(aes(x = 1:10, y = sil_width)) + 
+    scale_x_continuous(name = "k", breaks = 1:10)
+pam1 <- temp %>% pam(k=3) #use the pam function
+plot(pam1,which=2)
+
+#PAM function
+temp_pam <- temp %>% pam(k = 3)  
+temp_pam
+
+#Pairwise combos
+library(GGally)
+tempclust <- temp %>% mutate(cluster = as.factor(temp_pam$cluster))
+
+tempclust %>% ggpairs(cols = 1:7, aes(color = cluster))
+```
+*In my silhouette width ggplot, I found that k= 3 was a good number of clusters because it maximizes silhouette width more than is does at any other value up to k=10 thus the clusters would be more cohesive and separated and that New York, Kentucky, and Missouri are the representative medoids. My average silhouette width was 0.55 which indicates the structure to be reasonable.*
+
+*It seems that the clusters take form in 3 tiers in which New York has the highest income, 15-17 age range fatalities, and alcohol-related fatalities while Kentucky is the lowest in each of the aforementioned with Missouri in the middle. This tier level is reversed when we look at the 'baptist' variable and then the order is completely different on the 'beertax' variable with Missouri having the highest followed by Kentucky and New York.*
+
+*In the cluster pairs there is the strongest positive correlation observed between the 'afatal' and 'fatal1517' and the strongest negative between 'baptist' and 'income'. There were also significant results observed between 'beertax' and 'income' which had a negative correlation and 'baptist' and 'beertax' which had a strong positive correlation.*
     
     
 ### Dimensionality Reduction with PCA
 
 ```{R}
-# PCA code here
-```
+temp_nums<-temp %>% select_if(is.numeric) %>% scale
+rownames(temp_nums)<-Fatalities1987$state
+temp_pca<-princomp(temp_nums)
+names(temp_pca)
+summary(temp_pca, loadings = T)
 
-Discussions of PCA here. 
+eigval <- temp_pca$sdev^2
+eigval 
+eigval/sum(eigval)  #proportion of variance explained by each PC
+round(cumsum(eigval)/sum(eigval), 3)  #cumulative proportion of variance
+
+temp_pcadf <- data.frame(cor(temp_pca$scores))
+temp_pca$scores
+
+
+temp %>% mutate(PC1 = temp_pca$scores[, 1], PC2 = temp_pca$scores[, 
+    2]) %>% ggplot(aes(PC1, PC2, color = income)) + 
+    geom_point() + coord_fixed()
+
+
+```
+*In this model, I kept PC1 (.453) and PC2 (.809) as per consistent with the 85% cutoff I calculated from the cumulative proportion of variance. Scoring high in PC1 in my model indicates that the state has higher income per capita and lower scoring in every other variable in the model while scoring low would indicate higher rates of beer taxes, Baptism, car fatalities in the 15-17 age range, and car fatalities involving alcohol while having low income per capita. In PC2, scoring high would indicate higher income per capita, and car fatalities (15-17 age range and alcohol-related car accidents) while scoring low would indicate lower in the aforementioned and higher in the beer tax and Baptism.*
 
 ###  Linear Classifier
 
 ```{R}
-# linear classifier code here
-```
+TFatalities1987 <- Fatalities1987 %>% remove_rownames %>% column_to_rownames(var="state")
 
+logistic_fit <- glm(jail == "yes" ~ baptist + beertax + income + fatal1517 + afatal, data = TFatalities1987, family = "binomial")
+score <- predict(logistic_fit, type="response")
+class_diag(score,TFatalities1987$jail,positive="yes")
+score %>% round(3) #predicted probability for each obs
+
+table(truth = TFatalities1987$jail, predictions = score>.5) %>% addmargins()
+```
+*For my dataset, I used a logistic to predict my 'jail' variable which is a binary classifier that identifies a state carrying a mandatory jail sentence for DWIs with either a 'yes' or 'no'. The model's AUC was 0.729 which is "fair" performance.*
+
+*In my confusion matrix, I had 29 true-negatives, 5 false-positives, 11 false-negatives, and 3 true-positives.*
 ```{R}
-# cross-validation of linear classifier here
-```
+set.seed(322)
+k = 10
 
-Discussion here
+data <- sample_frac(TFatalities1987)  
+folds <- rep(1:k, length.out = nrow(data))  
+
+diags <- NULL
+
+i = 1
+for (i in 1:k) {
+    train <- data[folds != i, ]
+    test <- data[folds == i, ]
+    truth <- test$jail
+    
+    fit <- glm(jail == "yes" ~ ., data = train, 
+        family = "binomial")
+    
+    probs <- predict(fit, newdata = test, type = "response")
+
+    diags <- rbind(diags, class_diag(probs, truth, positive = "yes"))
+}
+
+summarize_all(diags, mean)
+```
+*For the cross-validation evaluation, I used a 10-fold CV to evaluate the average performance over 10 tests. The AUC from my original logistic regression model went from 0.729 to 0.522 from the 10-fold CV analysis which means that there is overfitting and my model is basically flipping a coin. This makes sense since a lot of my numeric variables are measuring very different things individually.*
 
 ### Non-Parametric Classifier
 
 ```{R}
 library(caret)
-# non-parametric classifier code here
-```
+fit <- knn3(jail ~ . , data=TFatalities1987)
+probs <- predict(fit, newdata=TFatalities1987)[,2] 
+class_diag(probs, TFatalities1987$jail, positive="yes") 
+table(truth = TFatalities1987$jail, predictions = probs>.5) %>% addmargins
 
+```
+*I used the knn method to predict my 'jail' variable which is a binary classifier that identifies a state carrying a mandatory jail sentence for DWIs with either a 'yes' or 'no'. The knn model's AUC on my dataset is 0.6618 which means it is performing pretty poorly.*
+
+*In my confusion matrix, there are 31 true-negatives, 3 false-positives, 10 false-negatives, and 4 true positives.*
 ```{R}
-# cross-validation of np classifier here
-```
+set.seed(322)
+k = 10
 
-Discussion
+data <- sample_frac(TFatalities1987)  
+folds <- rep(1:k, length.out = nrow(data))  
+
+diags <- NULL
+
+i = 1
+for (i in 1:k) {
+    train <- data[folds != i, ]
+    test <- data[folds == i, ]
+    truth <- test$jail
+    
+    # train model
+    fit <- knn3(jail == "yes" ~., data = train)
+    
+    # test model
+    probs <- predict(fit, newdata = test)[, 2]
+
+    diags <- rbind(diags, class_diag(probs, truth, positive = "yes"))
+}
+summarize_all(diags, mean)
+```
+*In the k-fold CV, my model performs poorly with an AUC of 0.31667. Since it dropped from my original knn model with an AUC of 0.6618, there seems to be indication of overfitting. Compared to how my linear model performed, my non-parametric model performed more poorly.*
 
 
 ### Regression/Numeric Prediction
 
 ```{R}
-# regression model code here
+fit<-lm(beertax~ afatal + fatal1517 + baptist,data=TFatalities1987) 
+yhat<-predict(fit) 
+mean((TFatalities1987$beertax-yhat)^2)
 ```
-
+*The MSE for my dataset when I predict 'beertax' using 'afatal', 'baptist', and 'fatal1517' is 0.123. *
 ```{R}
-# cross-validation of regression model here
-```
+#Perform k-fold CV on this same model (fine to use caret). Calculate the average MSE across your k testing folds.
+set.seed(1234)
+k=10
+data<-TFatalities1987[sample(nrow(TFatalities1987)),] #randomly order rows
+folds<-cut(seq(1:nrow(TFatalities1987)),breaks=k,labels=F) #create folds
+diags<-NULL
+for(i in 1:k){
+  train<-data[folds!=i,]
+  test<-data[folds==i,]
+  ##training set
+  fit<-lm(beertax~ afatal + fatal1517 + baptist,data=train)
+  ##test set (fold i)
+  yhat<-predict(fit,newdata=test)
+  ##MSE
+  diags<-mean((test$beertax-yhat)^2) 
+}
+mean(diags) 
 
-Discussion
+```
+*After performing a 10-fold CV on my regression model, my MSE went from 0.123 to 0.065. Since there is a decrease in error, I believe this indicates that my model is not showing signs of overfitting.*
 
 ### Python 
 
 ```{R}
 library(reticulate)
+py_install("pandas")
+py_install("seaborn")
+use_python("/usr/bin/python3", required = F)
 ```
 
 ```{python}
-# python code here
+import pandas as pd
+import seaborn as sns
+Fatalities = pd.read_csv("Fatalities.csv")
+Fatalities.head()
 ```
 
-Discussion
+*In this chunk, I loaded in my dataset and used .head() to get a peek at what my data looks like when it was loaded in.*
 
 ### Concluding Remarks
 
-Include concluding remarks here, if any
 
 
 
